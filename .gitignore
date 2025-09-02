@@ -1,0 +1,10 @@
+
+
+# ignore all logs
+*.log
+
+#
+/data
+
+#
+*.json
