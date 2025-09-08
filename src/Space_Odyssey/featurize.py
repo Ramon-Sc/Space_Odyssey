@@ -135,7 +135,7 @@ class featurizer:
 
     def Graph2Vec(self, graph,vector_dimension,):
 
-        #WL pulled ou to Img2graph adjust for this
+        #WL pulled out to Img2graph adjust for this !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
 
         """
         Uses graph2vec https://github.com/benedekrozemberczki/graph2vec
@@ -151,6 +151,8 @@ class featurizer:
 
 
     def spectral_features(self, graph):
+        #check https://developer.nvidia.com/blog/fast-spectral-graph-partitioning-gpus/
+        # library: https://pygsp.readthedocs.io/en/stable/
         pass
 
 
@@ -338,6 +340,7 @@ class featurizer:
 
     #D) UNI Model Embedding########################################################################################################################
     def UNI_model_embedding(self, image,path_to_model):
+        #https://github.com/mahmoodlab/UNI
         """
         Parameters:
             image: image to embed
@@ -350,3 +353,27 @@ class featurizer:
 
 
 
+    #E) Prov Gigapath embedding######################################################################################################################
+    def prov_gigapath_embedding(self, image,path_to_model):
+        #using provgigapath https://github.com/scampi/provgigapath
+        """
+        Parameters:
+            image: image to embed
+            path_to_model: path to the model
+        Returns:
+            embeddings: embeddings of the image
+        """
+       
+        pass
+
+
+    #F) virchow model embedding######################################################################################################################
+    def virchow_model_embedding(self, image,path_to_model):
+        """
+        Parameters:
+            image: image to embed
+            path_to_model: path to the model
+        Returns:
+            embeddings: embeddings of the image
+        """
+        pass
