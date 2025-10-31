@@ -8,18 +8,50 @@ D) UNI Model Embedding
 
 """
 
+import torch
+import torchvision
+import numpy as np
+import skimage.graph
+import skimage.filters
+import skimage.color
+import skimage.metrics
+import hashlib
+from sklearn.preprocessing import Binarizer
+from persim import RadialFiltration, HeightFiltration, ErosionFiltration
+from persim import VietorisRipsPersistence, PersistenceEntropy
+from sklearn.preprocessing import StandardScaler
+from sklearn.decomposition import PCA
+from torch.utils.data import TensorDataset, DataLoader
+import torch.nn as nn
+import torch.nn.functional as F
+import torch.optim as optim
+import torch.utils.data as data
+import torchvision.transforms as transforms
+import torchvision.datasets as datasets
+import torchvision.models as models
+import torchvision.transforms.functional as TF
+import torchvision.transforms.functional as TF
+
 #TODO:
 # adapt whole thing to batch processing!!!!!!!!!!!!!!!!
 #add spectral features
-
+# mitotic count feature ? how to extract it ?
 
 
 class featurizer:
     def __init__(self, config):
         self.config = config
 
+    #) hand crafted features? 
+    #-mitotic count
+    #-num segments quickshift
+    #-nucleus size estimate
 
 
+
+
+
+    
     #A)GRAPH Based Features########################################################################################################################
     def Img2graph(self, image,graph_type):
       
@@ -110,7 +142,7 @@ class featurizer:
             
             # Compute pairwise distances between centroids
             #TODO:Replace with own GPU implementation .... wherever that file is :/
-            dist_matrix = pairwise_distances(centroids)
+            dist_matrix = skimage.metrics.pairwise_distances(centroids)
             
             
             # Initialize adjacency matrix
@@ -153,7 +185,14 @@ class featurizer:
     def spectral_features(self, graph):
         #check https://developer.nvidia.com/blog/fast-spectral-graph-partitioning-gpus/
         # library: https://pygsp.readthedocs.io/en/stable/
-        pass
+
+
+        #nx graph provides cuda backend
+        graphanalyzer = graphanalyzer()
+        laplacian_matrix = graphanalyzer.laplacian_matrix(graph)
+        laplacian_spectrum = graphanalyzer.laplacian_spectrum(graph)
+
+        return laplacian_matrix, laplacian_spectrum
 
 
     def spectral_features2vec(self, spectral_features):
