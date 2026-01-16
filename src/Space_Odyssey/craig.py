@@ -10,7 +10,7 @@ import numpy as np
 import pickle
 from torch.utils.data import Subset
 import csv
-
+import torch.nn.functional as F
 class craig():
     """
     Craig - coreset selection algorithm implementation
@@ -280,8 +280,8 @@ class craig():
                     )
                     grad_i_vec = torch.cat([g.view(-1) for g in grad_i])
 
-                    # dot product of vectors of size (n_parameters,)!!!!!!!!!!!!
-                    alignment_score_i = torch.dot(grad_i_vec, residual_grad)
+                    # dot product of vectors of size (n_parameters,)!!!!!!!1!!!!
+                    alignment_score_i = torch.dot(F.normalize(grad_i_vec,p=2,dim=0), F.normalize(residual_grad,p=2,dim=0))
                     if (best_aligned_score is None) or (alignment_score_i > best_aligned_score):
                         best_aligned_score = alignment_score_i
                         best_aligned_index = int(indices[i].item())
