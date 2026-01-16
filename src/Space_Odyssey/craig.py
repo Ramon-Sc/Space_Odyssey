@@ -179,7 +179,7 @@ class craig():
                 writer.writerow([epoch, mean_loss_epoch])
 
 
-        return self.model, loss_list_total  
+        return self.model
 
 
 
@@ -255,12 +255,13 @@ class craig():
                 pred = self.model(inputs)
                 per_sample_loss = nn.CrossEntropyLoss(reduction='none')(pred, labels)
 
-                # Parameters to differentiate w.r.t.
+                # model params 
                 params = [p for p in self.model.parameters() if p.requires_grad]
 
                 # Build candidate positions (skip already-selected samples)
                 candidate_positions = []
                 candidate_indices = []
+
                 for i in range(batch_size):
                     idx_i = int(indices[i].item())
                     if idx_i in selected_sample_indices_set:
@@ -279,20 +280,13 @@ class craig():
                     )
                     grad_i_vec = torch.cat([g.view(-1) for g in grad_i])
 
+                    # dot product of vectors of size (n_parameters,)!!!!!!!!!!!!
                     alignment_score_i = torch.dot(grad_i_vec, residual_grad)
                     if (best_aligned_score is None) or (alignment_score_i > best_aligned_score):
                         best_aligned_score = alignment_score_i
                         best_aligned_index = int(indices[i].item())
                         best_aligned_grad_vec = grad_i_vec.detach()
 
-            # If we couldn't find a new point (should only happen if n_samples > N), stop.
-            if best_aligned_index is None:
-                print(
-                    f"Warning: stopped early at t={t} because no unselected samples remained."
-                )
-                break
-
-            # Commit this round's best choice
             selected_sample_indices.append(best_aligned_index)
             selected_sample_indices_set.add(best_aligned_index)
             selected_sample_grads.append(best_aligned_grad_vec)
@@ -304,15 +298,12 @@ class craig():
             A = selected_sample_grads_matrix @ selected_sample_grads_matrix.T  # (m, m)
             b = selected_sample_grads_matrix @ full_grad_sum                  # (m,)
 
-            # Small ridge for numerical stability (prevents singular matrix issues)
+            #  ridge for numerical stability 
             ridge = 1e-8 * torch.eye(A.size(0), device=A.device, dtype=A.dtype)
             optimized_weights = torch.linalg.solve(A + ridge, b)              # (m,)
 
             # Update residual: G_full - G_S^T * gammas
             residual_grad = full_grad_sum - selected_sample_grads_matrix.T @ optimized_weights
-
-            if (t + 1) % 5 == 0 or (t + 1) == self.n_samples:
-                print(f"Selected {t+1}/{self.n_samples} samples")
 
         return selected_sample_indices,optimized_weights
 
@@ -324,6 +315,12 @@ class craig():
 
 
 if __name__ == "__main__":
+
+    """
+    craig training experiment on mhist dataset an resnet18
+    """
+
+
     #read the config file
     config = get_config(config_path='./config.yml')
 

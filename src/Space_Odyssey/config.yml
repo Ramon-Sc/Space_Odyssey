@@ -1,0 +1,12 @@
+
+
+  filepath_train: /mnt/raid0/data/ramon/LUNG_COLON_DATA/lung_image_sets/train
+  filepath_test: /mnt/raid0/data/ramon/LUNG_COLON_DATA/lung_image_sets/test
+
+
+  n_samples: 100
+  n_reselections: 10
+  num_epochs: 100
+  batch_size: 32
+  num_epochs_warmup: 5
+  
