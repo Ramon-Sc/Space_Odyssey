@@ -522,7 +522,11 @@ def precompute_bracs_slide_embeddings(
     with torch.no_grad():
    
         for slide_path, label in tqdm(iter_bracs_slides(dataset), desc="Computing slide embeddings"):
-            slide = openslide.OpenSlide(slide_path)
+            try:
+                slide = openslide.OpenSlide(slide_path)
+            except openslide.OpenSlideUnsupportedFormatError:
+                print(f"Skipping unsupported slide: {slide_path}")
+                continue
             tiles, coords = extract_wsi_tiles(slide)
             if len(tiles) == 0:
                 continue
@@ -532,11 +536,17 @@ def precompute_bracs_slide_embeddings(
             tile_embeddings = []
             for i in range(0, tile_tensors.size(0), batch_size):
                 batch = tile_tensors[i : i + batch_size]
-                feats = tile_encoder(batch)
+                with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                    feats = tile_encoder(batch)
                 tile_embeddings.append(feats)
             tile_embeddings = torch.cat(tile_embeddings, dim=0)
 
-            slide_embedding = slide_encoder(tile_embeddings, coords_tensor)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                slide_embedding = slide_encoder(
+                    tile_embeddings.unsqueeze(0), coords_tensor.unsqueeze(0)
+                )
+            if isinstance(slide_embedding, list):
+                slide_embedding = slide_embedding[0]
             slide_embedding = slide_embedding.squeeze().detach().cpu().numpy()
 
             embeddings_list.append(slide_embedding)

@@ -378,6 +378,13 @@ class craig():
                             best_aligned_index = int(indices[i].item())
                             best_aligned_grad_vec = grad_i_vec.detach()
 
+            if best_aligned_index is None or best_aligned_grad_vec is None:
+                print(
+                    f"[CRAIG] No selectable candidates at step {t+1}/{self.n_samples}; "
+                    "stopping early."
+                )
+                break
+
             selected_sample_indices.append(best_aligned_index)
             selected_sample_indices_set.add(best_aligned_index)
             selected_sample_grads.append(best_aligned_grad_vec)
