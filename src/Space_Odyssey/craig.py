@@ -11,6 +11,13 @@ import pickle
 from torch.utils.data import Subset
 import csv
 import torch.nn.functional as F
+import time
+try:
+    from torch.func import vmap, grad, functional_call
+    _HAS_TORCH_FUNC = True
+except Exception:
+    _HAS_TORCH_FUNC = False
+from tqdm import tqdm
 class craig():
     """
     Craig - coreset selection algorithm implementation
@@ -25,13 +32,13 @@ class craig():
         n_reselections: the number of coreset selections to make during training
     """
 
-    def __init__(self,model,optimizer,train_dataset,val_dataset,num_epochs_warmup,num_epochs,n_samples,n_reselections):
+    def __init__(self,model,optimizer,train_dataset,val_dataset,num_epochs_warmup,num_epochs,n_samples,n_reselections,batch_size=32):
 
         self.model = model
         self.optimizer = optimizer
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
-        self.batch_size = 32
+        self.batch_size = batch_size
         #number of epochs per coreset selection
         self.num_epochs = num_epochs
         #number of samples per coreset selection
@@ -46,7 +53,7 @@ class craig():
     def train_model_warmup(self):
         
         #train the model on the full dataset for num_epochs_warmup epochs before starting the coreset selection
-
+        print(f"Training craig classifier model on full dataset for {self.num_epochs_warmup} warmup epochs with batch size {self.batch_size}")
         #create a data loader for the full dataset
         train_loader = DataLoader(
             self.train_dataset,
@@ -104,9 +111,12 @@ class craig():
         self.model.to(self.device)
 
         losses_craig_train = []
+        
         for epoch in range(self.num_epochs):
             #iterate over the data loader
-            for indicies, inputs, labels in craig_subset_train_loader:
+            for indicies, inputs, labels in tqdm(
+                craig_subset_train_loader, desc=f"CRAIG train epoch {epoch+1}/{self.num_epochs}"
+            ):
 
                 # dataset indices for this batch
                 batch_indices = indicies.to(self.device)
@@ -149,7 +159,8 @@ class craig():
             pin_memory=True,
         )
 
-        for epoch in range(self.num_epochs*self.n_reselections):
+       
+        for epoch in tqdm(range(self.num_epochs*self.n_reselections), desc="CRAIG reselections"):
 
             #add epochs spent in craig train to current epoch            
             epoch = epoch + self.num_epochs
@@ -225,8 +236,8 @@ class craig():
             full_grad_sum += grad_vec
     
 
-        print("full gradient sum shape: ", full_grad_sum.shape)
-        print("full gradient sum size: ", full_grad_sum.numel() * full_grad_sum.element_size() / 1024 / 1024, "MB")
+        #print("full gradient sum shape: ", full_grad_sum.shape)
+        #print("full gradient sum size: ", full_grad_sum.numel() * full_grad_sum.element_size() / 1024 / 1024, "MB")
 
     ############################################################################################################################
     #Step 2: CORESET SELECTION
@@ -244,19 +255,42 @@ class craig():
             best_aligned_index = None
             best_aligned_grad_vec = None
 
-            # iterate over the data loader batch by batch
-            for indices, inputs, labels in train_loader:
+            # iterate over the data loader batch by batch, with tqdm progress bar
+            
+            for indices, inputs, labels in tqdm(train_loader, desc="CRAIG coreset selection", leave=False):
                 self.model.zero_grad(set_to_none=True)
                 inputs = inputs.to(self.device)
                 labels = labels.to(self.device)
                 batch_size = inputs.size(0)
 
                 # Forward pass
-                pred = self.model(inputs)
-                per_sample_loss = nn.CrossEntropyLoss(reduction='none')(pred, labels)
+                """
+                gradients are computed for the last module only to fit memory constraints
+                THIS IS AN APPROXIMATION! Bounds are given in the paper.
+                """
+                
 
-                # model params 
-                params = [p for p in self.model.parameters() if p.requires_grad]
+                # get the modules of the model
+                modules = list(self.model.children())
+
+                # Compute features without tracking gradients to save memory,
+                # then compute per-sample losses with gradients enabled only for the last module.
+                with torch.no_grad():
+                    features = inputs
+                    for module in modules[:-1]:
+                        features = module(features)
+
+
+                        
+                #print("features shape: ", features.shape)
+                features = features.detach().clone()
+                self.model.zero_grad(set_to_none=True)
+                # Forward pass through the last module (gradients flow to last-module params only)
+                pred = modules[-1](features)
+                per_sample_loss = nn.CrossEntropyLoss(reduction='none')(pred, labels)
+                # Only compute per-sample gradients for the last module parameters
+                params = [p for p in modules[-1].parameters() if p.requires_grad]
+
 
                 # Build candidate positions (skip already-selected samples)
                 candidate_positions = []
@@ -270,22 +304,79 @@ class craig():
                     candidate_indices.append(idx_i)
 
                 # Evaluate alignment for candidates in this batch
-                for j, i in enumerate(candidate_positions):
-                    retain_graph = j < (len(candidate_positions) - 1)
-                    grad_i = torch.autograd.grad(
-                        per_sample_loss[i],
-                        params,
-                        retain_graph=retain_graph,
-                        create_graph=False,
-                    )
-                    grad_i_vec = torch.cat([g.view(-1) for g in grad_i])
+                #vectorized approach with torch.func
+                if _HAS_TORCH_FUNC:
+                    
+                    
+                   
+                    last_module = modules[-1]
+                    last_params = dict(last_module.named_parameters())
+                    last_buffers = dict(last_module.named_buffers())
 
-                    # dot product of vectors of size (n_parameters,)!!!!!!!1!!!!
-                    alignment_score_i = torch.dot(F.normalize(grad_i_vec,p=2,dim=0), F.normalize(residual_grad,p=2,dim=0))
-                    if (best_aligned_score is None) or (alignment_score_i > best_aligned_score):
-                        best_aligned_score = alignment_score_i
-                        best_aligned_index = int(indices[i].item())
-                        best_aligned_grad_vec = grad_i_vec.detach()
+                    def _loss_fn(params_dict, buffers_dict, x, y):
+                        pred = functional_call(
+                            last_module,
+                            (params_dict, buffers_dict),
+                            (x.unsqueeze(0),),
+                        )
+                        return nn.CrossEntropyLoss()(pred, y.unsqueeze(0))
+
+                    per_sample_grads = vmap(
+                        grad(_loss_fn), in_dims=(None, None, 0, 0)
+                    )(last_params, last_buffers, features, labels)
+
+                    grads_matrix = torch.cat(
+                        [
+                            g.reshape(g.size(0), -1)
+                            for g in per_sample_grads.values()
+                        ],
+                        dim=1,
+                    )
+
+                    residual_grad_last = residual_grad[: grads_matrix.size(1)]
+                    grad_norm = F.normalize(grads_matrix, p=2, dim=1)
+                    residual_norm = F.normalize(residual_grad_last, p=2, dim=0)
+                    if candidate_positions:
+                        candidate_idx = torch.tensor(
+                            candidate_positions, device=grads_matrix.device
+                        )
+                        candidate_scores = grad_norm.index_select(
+                            0, candidate_idx
+                        ) @ residual_norm
+                        max_pos = int(torch.argmax(candidate_scores).item())
+                        alignment_score_i = candidate_scores[max_pos]
+                        i = candidate_positions[max_pos]
+                        if (best_aligned_score is None) or (
+                            alignment_score_i > best_aligned_score
+                        ):
+                            best_aligned_score = alignment_score_i
+                            best_aligned_index = int(indices[i].item())
+                            best_aligned_grad_vec = grads_matrix[i].detach()
+
+                #fallback to non-vectorized approach
+                else:
+                    for j, i in enumerate(candidate_positions):
+                        retain_graph = j < (len(candidate_positions) - 1)
+                        grad_i = torch.autograd.grad(
+                            per_sample_loss[i],
+                            params,
+                            retain_graph=retain_graph,
+                            create_graph=False,
+                        )
+                        grad_i_vec = torch.cat([g.view(-1) for g in grad_i])
+
+                        # crop residual grad to the same size as grad_i_vec (n_parameters_last_layer(s),)
+                        residual_grad_last = residual_grad[:grad_i_vec.size(0)]
+                        alignment_score_i = torch.dot(
+                            F.normalize(grad_i_vec, p=2, dim=0),
+                            F.normalize(residual_grad_last, p=2, dim=0),
+                        )
+                        if (best_aligned_score is None) or (
+                            alignment_score_i > best_aligned_score
+                        ):
+                            best_aligned_score = alignment_score_i
+                            best_aligned_index = int(indices[i].item())
+                            best_aligned_grad_vec = grad_i_vec.detach()
 
             selected_sample_indices.append(best_aligned_index)
             selected_sample_indices_set.add(best_aligned_index)
@@ -333,8 +424,14 @@ if __name__ == "__main__":
     #initialize the model
     model = models.resnet18(weights=models.ResNet18_Weights.DEFAULT)
 
+    #
+    
+
     # match num classes of the dataset
     model.fc = nn.Linear(model.fc.in_features, num_classes)
+
+    print(model)
+    exit()
 
     optimizer = optim.Adam(model.parameters(), lr=0.001)
 
